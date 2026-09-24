@@ -20,6 +20,11 @@ document.addEventListener("DOMContentLoaded", function () {
     // Altere este PIN para outro de sua preferência.
     // Observação: como o site é estático, isto não é uma proteção de segurança real.
     const ADMIN_PIN = "1234";
+    const AUTHORIZED_ADMIN_EMAILS = new Set([
+        "lf5680878@gmail.com",
+        "projetositepuroamor@gmail.com",
+        "ls9114554@gmail.com"
+    ]);
 
     /* =====================================================
        SUPABASE - PERSISTÊNCIA ONLINE
@@ -711,19 +716,90 @@ document.addEventListener("DOMContentLoaded", function () {
         return cart.filter(item => !isAvailable(item.produto));
     }
 
-    function openAdmin() {
-        const pin = window.prompt("Área do dono\n\nDigite o PIN para gerenciar os produtos:");
-        if (pin === null) return;
-        if (pin !== ADMIN_PIN) { toast("PIN incorreto."); return; }
+    async function getAdminSession() {
+        if (!supabaseClient) return null;
+        try {
+            const { data, error } = await supabaseClient.auth.getSession();
+            if (error) throw error;
+            return data?.session || null;
+        } catch (error) {
+            console.error("Supabase Auth: não foi possível verificar a sessão.", error);
+            return null;
+        }
+    }
+
+    async function signInAdmin() {
+        if (!supabaseClient) {
+            toast("O sistema de login não está disponível.");
+            return null;
+        }
+
+        const email = window.prompt("Painel do dono\n\nDigite seu e-mail autorizado:");
+        if (email === null) return null;
+        const normalizedEmail = email.trim().toLowerCase();
+        if (!AUTHORIZED_ADMIN_EMAILS.has(normalizedEmail)) {
+            toast("Este e-mail não está autorizado para o painel.");
+            return null;
+        }
+
+        const password = window.prompt("Digite a senha da sua conta Supabase:");
+        if (password === null) return null;
+        if (!password) {
+            toast("Digite a senha para entrar.");
+            return null;
+        }
+
+        const { data, error } = await supabaseClient.auth.signInWithPassword({
+            email: normalizedEmail,
+            password
+        });
+        if (error) {
+            console.error("Supabase Auth: falha no login.", error);
+            toast("Não foi possível entrar. Confira o e-mail e a senha.");
+            return null;
+        }
+
+        const loggedEmail = String(data?.user?.email || "").toLowerCase();
+        if (!AUTHORIZED_ADMIN_EMAILS.has(loggedEmail)) {
+            await supabaseClient.auth.signOut();
+            toast("Esta conta não está autorizada para o painel.");
+            return null;
+        }
+        return data?.session || null;
+    }
+
+    async function openAdmin() {
+        if (!supabaseClient) {
+            toast("Não foi possível carregar o login do painel.");
+            return;
+        }
+
+        let session = await getAdminSession();
+        let loggedEmail = String(session?.user?.email || "").toLowerCase();
+        if (!session || !AUTHORIZED_ADMIN_EMAILS.has(loggedEmail)) {
+            if (session) await supabaseClient.auth.signOut();
+            session = await signInAdmin();
+            if (!session) return;
+            loggedEmail = String(session?.user?.email || "").toLowerCase();
+        }
 
         let modal = $("#adminModal");
         if (!modal) {
             modal = document.createElement("div");
             modal.id = "adminModal";
             modal.className = "admin-modal";
-            modal.innerHTML = '<div class="modal-card admin-card"><button type="button" class="modal-close" data-close="adminModal">×</button><span class="eyebrow">PURO AMOR</span><h2>Painel do dono</h2><p class="admin-note">Gerencie o cardápio sem alterar o código. Você pode editar produtos, adicionar novos e remover os produtos criados pelo painel.</p><div class="admin-new-product"><h3>➕ Adicionar novo produto</h3><div class="admin-new-grid"><label>Nome<input id="newProductName" type="text" placeholder="Ex.: Brownie especial"></label><label>Preço (R$)<input id="newProductPrice" type="text" inputmode="decimal" placeholder="15,00"></label><label>Quantidade<input id="newProductStock" type="number" min="0" step="1" placeholder="Sem limite"></label><label>Categoria<input id="newProductCategory" list="adminCategoryOptions" type="text" placeholder="Ex.: Bolos"></label><label>Peso<input id="newProductWeight" type="text" inputmode="text" placeholder="Ex.: 500 g, 1 kg, 120 ml"></label><label class="admin-wide">Sabores (opcional)<textarea id="newProductFlavors" rows="3" placeholder="Ex.: Brigadeiro, Ninho, Morango, Nutella&#10;Você também pode colocar um sabor por linha."></textarea></label><datalist id="adminCategoryOptions"></datalist><label class="admin-wide">Descrição<textarea id="newProductDescription" rows="3" placeholder="Descrição do produto"></textarea></label><label class="admin-wide">URL da foto<input id="newProductImageURL" type="url" placeholder="https://..."></label><label class="admin-wide image-upload-label">Ou escolha uma foto do computador<input id="newProductImageFile" type="file" accept="image/*"></label></div><div class="admin-actions"><button type="button" class="admin-save-btn" id="addNewProductBtn">Adicionar ao cardápio</button></div></div><div class="admin-categories"><h3 class="admin-section-title">Categorias do cardápio</h3><p class="admin-note">Adicione novas categorias para elas aparecerem automaticamente nos filtros do cardápio. Você também pode renomear ou excluir categorias que não estejam sendo usadas.</p><div class="admin-new-grid"><label>Nova categoria<input id="newCategoryName" type="text" placeholder="Ex.: Brownies"></label></div><div class="admin-actions"><button type="button" class="admin-save-btn" id="addCategoryBtn">Adicionar categoria</button></div><div id="adminCategoryList" class="admin-coupon-list"></div></div><div class="admin-coupons"><h3 class="admin-section-title">Cupons autorizados</h3><p class="admin-note">Somente os cupons cadastrados aqui e marcados como ativos poderão ser usados pelos clientes.</p><div class="admin-new-grid"><label>Código do cupom<input id="newCouponCode" type="text" placeholder="Ex.: BOLO10" maxlength="30"></label><label>Tipo de desconto<select id="newCouponType"><option value="percent">Porcentagem (%)</option><option value="fixed">Valor fixo (R$)</option></select></label><label>Desconto<input id="newCouponValue" type="number" min="0.01" step="0.01" placeholder="10"></label></div><div class="admin-actions"><button type="button" class="admin-save-btn" id="addAuthorizedCouponBtn">Autorizar cupom</button></div><div id="adminCouponList" class="admin-coupon-list"></div></div><div class="admin-sales"><h3 class="admin-section-title">Relatório de vendas</h3><p class="admin-note">Resumo dos pedidos enviados pelo site neste navegador. O frete de entregas fica fora do valor de vendas até a confirmação da loja.</p><div id="adminSalesReport"></div><div class="admin-actions"><button type="button" class="admin-save-btn" id="refreshSalesReport">Atualizar relatório</button><button type="button" class="admin-remove-btn" id="clearSalesHistory">Apagar histórico</button></div></div><h3 class="admin-section-title">Produtos do cardápio</h3><div id="adminProductList" class="admin-list"></div><h3 class="admin-section-title admin-removed-title">Produtos removidos</h3><div id="adminRemovedList" class="admin-removed-list"></div></div>';
+            modal.innerHTML = '<div class="modal-card admin-card"><button type="button" class="modal-close" data-close="adminModal">×</button><span class="eyebrow">PURO AMOR</span><h2>Painel do dono</h2><p class="admin-note">Conta autorizada: <strong id="adminLoggedEmail"></strong></p><div class="admin-actions" style="margin-bottom:16px"><button type="button" class="admin-remove-btn" id="adminLogoutBtn">Sair da conta</button></div><p class="admin-note">Gerencie o cardápio sem alterar o código. Você pode editar produtos, adicionar novos e remover os produtos criados pelo painel.</p><div class="admin-new-product"><h3>➕ Adicionar novo produto</h3><div class="admin-new-grid"><label>Nome<input id="newProductName" type="text" placeholder="Ex.: Brownie especial"></label><label>Preço (R$)<input id="newProductPrice" type="text" inputmode="decimal" placeholder="15,00"></label><label>Quantidade<input id="newProductStock" type="number" min="0" step="1" placeholder="Sem limite"></label><label>Categoria<input id="newProductCategory" list="adminCategoryOptions" type="text" placeholder="Ex.: Bolos"></label><label>Peso<input id="newProductWeight" type="text" inputmode="text" placeholder="Ex.: 500 g, 1 kg, 120 ml"></label><label class="admin-wide">Sabores (opcional)<textarea id="newProductFlavors" rows="3" placeholder="Ex.: Brigadeiro, Ninho, Morango, Nutella&#10;Você também pode colocar um sabor por linha."></textarea></label><datalist id="adminCategoryOptions"></datalist><label class="admin-wide">Descrição<textarea id="newProductDescription" rows="3" placeholder="Descrição do produto"></textarea></label><label class="admin-wide">URL da foto<input id="newProductImageURL" type="url" placeholder="https://..."></label><label class="admin-wide image-upload-label">Ou escolha uma foto do computador<input id="newProductImageFile" type="file" accept="image/*"></label></div><div class="admin-actions"><button type="button" class="admin-save-btn" id="addNewProductBtn">Adicionar ao cardápio</button></div></div><div class="admin-categories"><h3 class="admin-section-title">Categorias do cardápio</h3><p class="admin-note">Adicione novas categorias para elas aparecerem automaticamente nos filtros do cardápio. Você também pode renomear ou excluir categorias que não estejam sendo usadas.</p><div class="admin-new-grid"><label>Nova categoria<input id="newCategoryName" type="text" placeholder="Ex.: Brownies"></label></div><div class="admin-actions"><button type="button" class="admin-save-btn" id="addCategoryBtn">Adicionar categoria</button></div><div id="adminCategoryList" class="admin-coupon-list"></div></div><div class="admin-coupons"><h3 class="admin-section-title">Cupons autorizados</h3><p class="admin-note">Somente os cupons cadastrados aqui e marcados como ativos poderão ser usados pelos clientes.</p><div class="admin-new-grid"><label>Código do cupom<input id="newCouponCode" type="text" placeholder="Ex.: BOLO10" maxlength="30"></label><label>Tipo de desconto<select id="newCouponType"><option value="percent">Porcentagem (%)</option><option value="fixed">Valor fixo (R$)</option></select></label><label>Desconto<input id="newCouponValue" type="number" min="0.01" step="0.01" placeholder="10"></label></div><div class="admin-actions"><button type="button" class="admin-save-btn" id="addAuthorizedCouponBtn">Autorizar cupom</button></div><div id="adminCouponList" class="admin-coupon-list"></div></div><div class="admin-sales"><h3 class="admin-section-title">Relatório de vendas</h3><p class="admin-note">Resumo dos pedidos enviados pelo site neste navegador. O frete de entregas fica fora do valor de vendas até a confirmação da loja.</p><div id="adminSalesReport"></div><div class="admin-actions"><button type="button" class="admin-save-btn" id="refreshSalesReport">Atualizar relatório</button><button type="button" class="admin-remove-btn" id="clearSalesHistory">Apagar histórico</button></div></div><h3 class="admin-section-title">Produtos do cardápio</h3><div id="adminProductList" class="admin-list"></div><h3 class="admin-section-title admin-removed-title">Produtos removidos</h3><div id="adminRemovedList" class="admin-removed-list"></div></div>';
             document.body.appendChild(modal);
+
+            $("#adminLogoutBtn", modal)?.addEventListener("click", async () => {
+                try { await supabaseClient.auth.signOut(); } catch (_) {}
+                modal.classList.remove("open");
+                toast("Sessão encerrada.");
+            });
         }
+
+        const emailBox = $("#adminLoggedEmail");
+        if (emailBox) emailBox.textContent = loggedEmail;
 
         const addButton = $("#addNewProductBtn");
         if (addButton && !addButton.dataset.bound) {
