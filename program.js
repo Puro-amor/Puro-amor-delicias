@@ -28,7 +28,7 @@ document.addEventListener("DOMContentLoaded", function () {
     ===================================================== */
     const SUPABASE_URL = "https://uhwnfxfawrkdacylbjqs.supabase.co";
     const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_tfa3IEVhYlftTiR3sHsnFg_vHdoUFaf";
-    const SUPABASE_TABLE = "produtos";
+    const SUPABASE_TABLE = "Produtos";
     const supabaseClient = window.supabase?.createClient
         ? window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY)
         : null;
