@@ -19,7 +19,20 @@ document.addEventListener("DOMContentLoaded", function () {
     const FEATURED_KEY = "puroAmorDestaques";
     // Altere este PIN para outro de sua preferência.
     // Observação: como o site é estático, isto não é uma proteção de segurança real.
-    const ADMIN_PIN = "30415171";
+    const ADMIN_PIN = "1234";
+
+    /* =====================================================
+       SUPABASE - PERSISTÊNCIA ONLINE
+       A Publishable Key pode ficar no navegador.
+       Nunca coloque aqui a Secret Key ou a senha do banco.
+    ===================================================== */
+    const SUPABASE_URL = "https://uhwnfxfawrkdacylbjqs.supabase.co";
+    const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_tfa3IEVhYlftTiR3sHsnFg_vHdoUFaf";
+    const SUPABASE_TABLE = "produtos";
+    const supabaseClient = window.supabase?.createClient
+        ? window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY)
+        : null;
+    let supabaseOnline = false;
 
     const $ = (s, root = document) => root.querySelector(s);
     const $$ = (s, root = document) => Array.from(root.querySelectorAll(s));
@@ -58,6 +71,131 @@ document.addEventListener("DOMContentLoaded", function () {
 
     function saveJSON(key, value) {
         try { localStorage.setItem(key, JSON.stringify(value)); } catch (_) {}
+    }
+
+    function remoteProductPayload(name) {
+        const data = getProduct(name);
+        const flavors = normalizeFlavors(data.flavors);
+        const available = availability[name] !== false && !(data.stock !== null && data.stock !== undefined && data.stock !== "" && Number(data.stock) <= 0);
+        const flags = getFeatured(name);
+        return {
+            name: String(name),
+            price: Number(data.price || 0),
+            stock: data.stock === null || data.stock === undefined || data.stock === "" ? null : Math.max(0, Number(data.stock)),
+            category: String(data.category || "Outros"),
+            weight: String(data.weight || ""),
+            description: String(data.description || ""),
+            image: String(data.image || ""),
+            flavors: flavors.join(", "),
+            available: !!available,
+            novidade: !!flags.novidade,
+            mais_pedidos: !!flags.maisPedidos
+        };
+    }
+
+    async function saveProductOnline(name) {
+        if (!supabaseClient || !name) return;
+        try {
+            const payload = remoteProductPayload(name);
+            const { data: existing, error: findError } = await supabaseClient
+                .from(SUPABASE_TABLE)
+                .select("id")
+                .eq("name", name)
+                .limit(1);
+            if (findError) throw findError;
+
+            let error;
+            if (existing && existing.length) {
+                ({ error } = await supabaseClient
+                    .from(SUPABASE_TABLE)
+                    .update(payload)
+                    .eq("id", existing[0].id));
+            } else {
+                ({ error } = await supabaseClient
+                    .from(SUPABASE_TABLE)
+                    .insert(payload));
+            }
+            if (error) throw error;
+            supabaseOnline = true;
+        } catch (error) {
+            console.error("Supabase: não foi possível salvar o produto.", error);
+            supabaseOnline = false;
+            toast("Alteração salva neste navegador. O Supabase não respondeu.");
+        }
+    }
+
+    async function removeProductOnline(name) {
+        if (!supabaseClient || !name) return;
+        try {
+            const { error } = await supabaseClient
+                .from(SUPABASE_TABLE)
+                .update({ available: false })
+                .eq("name", name);
+            if (error) throw error;
+            supabaseOnline = true;
+        } catch (error) {
+            console.error("Supabase: não foi possível marcar o produto como removido.", error);
+            supabaseOnline = false;
+        }
+    }
+
+    async function loadProductsOnline() {
+        if (!supabaseClient) {
+            console.warn("Supabase JS não carregado; usando armazenamento local.");
+            return;
+        }
+        try {
+            const { data: rows, error } = await supabaseClient
+                .from(SUPABASE_TABLE)
+                .select("id,name,price,stock,category,weight,description,image,flavors,available,novidade,mais_pedidos")
+                .order("id", { ascending: true });
+            if (error) throw error;
+
+            (rows || []).forEach(row => {
+                if (!row.name) return;
+                const name = String(row.name);
+                const existsInStaticCatalog = productCards().some(card => normalize($(".order-btn", card)?.dataset.product || "") === normalize(name));
+                productData[name] = {
+                    ...(productData[name] || {}),
+                    price: Number(row.price || 0),
+                    stock: row.stock === null ? null : Number(row.stock),
+                    category: row.category || (productData[name]?.category || "Outros"),
+                    weight: row.weight || "",
+                    description: row.description || "",
+                    image: row.image || "",
+                    flavors: normalizeFlavors(row.flavors || ""),
+                    novidade: row.novidade === true,
+                    maisPedidos: row.mais_pedidos === true
+                };
+                availability[name] = row.available !== false;
+                featured[name] = { novidade: row.novidade === true, maisPedidos: row.mais_pedidos === true };
+
+                if (!existsInStaticCatalog && !customProductByName(name)) {
+                    customProducts.push({
+                        id: "remote-" + row.id,
+                        name,
+                        price: Number(row.price || 0),
+                        stock: row.stock === null ? null : Number(row.stock),
+                        category: row.category || "Outros",
+                        weight: row.weight || "",
+                        flavors: normalizeFlavors(row.flavors || ""),
+                        description: row.description || "",
+                        image: row.image || "",
+                        createdAt: new Date().toISOString()
+                    });
+                }
+            });
+
+            saveJSON(PRODUCT_KEY, productData);
+            saveJSON(AVAIL_KEY, availability);
+            saveJSON(FEATURED_KEY, featured);
+            saveCustomProducts();
+            supabaseOnline = true;
+        } catch (error) {
+            console.error("Supabase: não foi possível carregar os produtos.", error);
+            supabaseOnline = false;
+            toast("Não foi possível carregar as alterações online. Usando os dados locais.");
+        }
     }
 
     function money(value) {
@@ -352,6 +490,7 @@ document.addEventListener("DOMContentLoaded", function () {
     function restoreProduct(name) {
         removedProducts = removedProducts.filter(x => x !== name);
         saveRemovedProducts();
+        saveProductOnline(name);
         applyRemovedProducts();
         renderAvailability();
         prepareSearchData();
@@ -449,6 +588,7 @@ document.addEventListener("DOMContentLoaded", function () {
         saveCustomProducts();
         saveJSON(PRODUCT_KEY, productData);
         saveAvailability();
+        await saveProductOnline(name);
 
         // Recria o card no catálogo público e trata o produto novo como os demais.
         renderCustomProducts();
@@ -716,6 +856,7 @@ document.addEventListener("DOMContentLoaded", function () {
         else if (stock === null || stock > 0) availability[name] = true;
         saveJSON(PRODUCT_KEY, productData);
         saveAvailability();
+        saveProductOnline(name);
         renderAvailability();
         prepareSearchData();
         renderFeatured();
@@ -730,6 +871,7 @@ document.addEventListener("DOMContentLoaded", function () {
         if (availability[name] && productData[name]?.stock === 0) productData[name].stock = 1;
         saveAvailability();
         saveJSON(PRODUCT_KEY, productData);
+        saveProductOnline(name);
         renderAvailability();
         renderAdminList();
         runSearch();
@@ -1616,6 +1758,9 @@ document.addEventListener("DOMContentLoaded", function () {
 
     /* adiciona detalhes e favoritos aos produtos sem alterar o tema */
     // Produtos cadastrados pelo dono também fazem parte do cardápio público.
+    // Primeiro tentamos buscar as alterações no Supabase; se falhar, o site
+    // continua funcionando com os dados salvos neste navegador.
+    loadProductsOnline().finally(() => {
     renderCustomProducts();
     applyRemovedProducts();
     prepareSearchData();
@@ -1631,5 +1776,6 @@ document.addEventListener("DOMContentLoaded", function () {
     renderCart();
     runSearch();
 
-    console.log("PURO AMOR 2026.09.22 — sistema carregado");
+    console.log("PURO AMOR 2026.09.22 — sistema carregado" + (supabaseOnline ? " + Supabase online" : " + modo local"));
+    });
 });
