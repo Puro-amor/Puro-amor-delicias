@@ -98,27 +98,9 @@ document.addEventListener("DOMContentLoaded", function () {
         };
     }
 
-    async function ensureAdminSession() {
-        if (!supabaseClient) return false;
-        let session = await getAdminSession();
-        let email = String(session?.user?.email || "").toLowerCase();
-        if (session && AUTHORIZED_ADMIN_EMAILS.has(email)) return true;
-        if (session) {
-            try { await supabaseClient.auth.signOut(); } catch (_) {}
-        }
-        session = await signInAdmin();
-        email = String(session?.user?.email || "").toLowerCase();
-        return !!session && AUTHORIZED_ADMIN_EMAILS.has(email);
-    }
-
     async function saveProductOnline(name) {
         if (!supabaseClient || !name) return false;
         try {
-            const authenticated = await ensureAdminSession();
-            if (!authenticated) {
-                toast("Faça login no painel para sincronizar as alterações.");
-                return false;
-            }
             const payload = remoteProductPayload(name);
             const { data: existing, error: findError } = await supabaseClient
                 .from(SUPABASE_TABLE).select("id").eq("name", name).limit(1);
@@ -524,19 +506,31 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     async function removeProduct(name) {
+        if (!name || !confirm('Remover "' + name + '" do cardápio?')) return;
+
+        // Primeiro sincroniza a remoção no Supabase para que os outros dispositivos
+        // também recebam a indisponibilidade. Não apagamos productData antes disso,
+        // pois ele ainda é necessário para identificar o registro remoto.
+        const synced = await removeProductOnline(name);
+        if (!synced) {
+            toast("Não foi possível remover este produto online. Tente novamente.");
+            return;
+        }
+
         const product = customProductByName(name);
-        if (!confirm('Remover "' + name + '" do cardápio?')) return;
         if (product) {
-            customProducts = customProducts.filter(p => p.name !== name);
+            customProducts = customProducts.filter(p => normalize(p.name) !== normalize(name));
             saveCustomProducts();
-        } else if (!removedProducts.includes(name)) {
+        } else if (!removedProducts.some(x => normalize(x) === normalize(name))) {
             removedProducts.push(name);
             saveRemovedProducts();
         }
-        delete productData[name];
-        delete availability[name];
-        favorites = favorites.filter(x => x !== name);
-        cart = cart.filter(item => item.produto !== name);
+
+        availability[name] = false;
+        if (productData[name]) productData[name].available = false;
+        favorites = favorites.filter(x => normalize(x) !== normalize(name));
+        cart = cart.filter(item => normalize(item.produto) !== normalize(name));
+
         saveJSON(PRODUCT_KEY, productData);
         saveAvailability();
         saveJSON(FAV_KEY, favorites);
@@ -550,8 +544,7 @@ document.addEventListener("DOMContentLoaded", function () {
         renderCart();
         runSearch();
         renderAdminList();
-        if (product) await removeProductOnline(name);
-        toast(name + " removido do cardápio.");
+        toast(name + " removido do cardápio e sincronizado! ❤️");
     }
 
     function renderRemovedProducts() {
@@ -887,14 +880,54 @@ document.addEventListener("DOMContentLoaded", function () {
     function removeCategory(index) {
         const name = categories[index];
         if (!name) return;
-        const used = productCards().some(card => categorySlug(getProduct($(".order-btn", card)?.dataset.product || "").category) === categorySlug(name));
-        if (used) { toast("Não é possível excluir uma categoria que possui produtos. Renomeie ou mova os produtos primeiro."); return; }
-        if (!confirm('Excluir a categoria "' + name + '"?')) return;
+
+        const usedCards = productCards().filter(card => {
+            const productName = $(".order-btn", card)?.dataset.product || "";
+            return productName && categorySlug(getProduct(productName).category) === categorySlug(name);
+        });
+        const usedCustom = customProducts.filter(product => categorySlug(product.category) === categorySlug(name));
+        const usedCount = usedCards.length + usedCustom.length;
+
+        if (usedCount) {
+            const destino = window.prompt(
+                'A categoria "' + categoryLabel(name) + '" possui ' + usedCount + ' produto(s). Digite a nova categoria para mover esses produtos antes de excluir:',
+                "Outros"
+            );
+            if (!destino || !destino.trim()) return;
+            const target = destino.trim();
+            if (normalize(target) === normalize(name)) {
+                toast("Escolha uma categoria diferente.");
+                return;
+            }
+            registerCategory(target);
+
+            usedCards.forEach(card => {
+                const productName = $(".order-btn", card)?.dataset.product || "";
+                if (!productName) return;
+                productData[productName] = { ...(productData[productName] || {}), category: target };
+                saveProductOnline(productName);
+            });
+            usedCustom.forEach(product => {
+                product.category = target;
+                productData[product.name] = { ...(productData[product.name] || {}), category: target };
+                saveProductOnline(product.name);
+            });
+            saveJSON(PRODUCT_KEY, productData);
+            saveCustomProducts();
+        }
+
+        if (!confirm('Excluir a categoria "' + categoryLabel(name) + '"?')) return;
         categories.splice(index, 1);
         saveJSON(CATEGORY_KEY, categories);
+        renderCustomProducts();
         renderCategoryFilters();
         renderAdminCategories();
-        toast("Categoria excluída.");
+        renderAvailability();
+        prepareSearchData();
+        renderFeatured();
+        runSearch();
+        renderAdminList();
+        toast("Categoria excluída com sucesso.");
     }
 
     function renderAdminList() {
@@ -1040,7 +1073,7 @@ document.addEventListener("DOMContentLoaded", function () {
             productData[name] = { ...(productData[name] || getBaseProduct(name)), image: dataURL };
             saveJSON(PRODUCT_KEY, productData);
             if (preview) preview.innerHTML = '<img src="' + escapeHTML(dataURL) + '" alt="Prévia">';
-            renderAvailability();
+            renderProductImages();
             toast("Foto carregada! Clique em Salvar alterações. ❤️");
         }).catch(error => {
             console.error("Erro ao carregar foto:", error);
@@ -1649,6 +1682,24 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     }
 
+    /* ===================== CHATBOT ===================== */
+    function openChat() { $("#chatbot")?.classList.add("open"); $("#chatInput")?.focus(); }
+    function closeChat() { $("#chatbot")?.classList.remove("open"); }
+    const answers = [
+        [["oi","ola","olá","bom dia","boa tarde","boa noite"], "Olá! 💗 Bem-vindo(a) à Puro Amor Delícias Caseiras!"],
+        [["cardapio","cardápio","menu"], "📖 Confira nossas delícias no cardápio acima."],
+        [["preco","preço","valor"], "💰 Os preços aparecem em cada produto do cardápio."],
+        [["entrega","delivery"], "🛵 Consulte as condições de entrega no momento do pedido."],
+        [["pedido","comprar","carrinho"], "🛒 Clique em Pedir, confira o carrinho e finalize pelo WhatsApp."],
+        [["instagram"], "📸 Instagram: @puroamor_deliciascaseiras"],
+        [["ifood"], "🛵 O botão do iFood está na área de contato."]
+    ];
+    function chatAnswer(text) {
+        const t = normalize(text);
+        for (const [words, answer] of answers) if (words.some(w => t.includes(normalize(w)))) return answer;
+        return "Posso ajudar com cardápio, preços, entrega, pedido, Instagram ou iFood. 😊";
+    }
+
     /* ===================== EVENTOS ÚNICOS ===================== */
     $("#cartFab")?.addEventListener("click", openCart);
     $("#cartClose")?.addEventListener("click", closeCart);
@@ -1803,7 +1854,35 @@ document.addEventListener("DOMContentLoaded", function () {
     $("#productSearch")?.addEventListener("input", runSearch);
     $("#productSearch")?.addEventListener("search", runSearch);
 
-    document.addEventListener("keydown", event => { if (event.key === "Escape") { closeCart(); $$(".details-modal,.checkout-modal,.admin-modal").forEach(m => m.classList.remove("open")); } });
+    $("#chatFab")?.addEventListener("click", () => $("#chatbot")?.classList.contains("open") ? closeChat() : openChat());
+    $("#closeChat")?.addEventListener("click", closeChat);
+    $("#chatForm")?.addEventListener("submit", function (event) {
+        event.preventDefault();
+        const input = $("#chatInput");
+        const text = input?.value.trim();
+        if (!text) return;
+        const messages = $("#chatMessages");
+        const add = (value, type) => { if (!messages) return; const div = document.createElement("div"); div.className = "message " + type; div.textContent = value; messages.appendChild(div); messages.scrollTop = messages.scrollHeight; };
+        input.value = "";
+        add(text, "user");
+        setTimeout(() => add(chatAnswer(text), "bot"), 250);
+    });
+
+    $$(".quick-options button").forEach(button => button.addEventListener("click", () => {
+        const text = button.dataset.question || button.textContent;
+        const messages = $("#chatMessages");
+        if (!messages) return;
+        const add = (value, type) => { const div = document.createElement("div"); div.className = "message " + type; div.textContent = value; messages.appendChild(div); messages.scrollTop = messages.scrollHeight; };
+        add(text, "user");
+        setTimeout(() => add(chatAnswer(text), "bot"), 250);
+    }));
+
+    $$("[data-ifood-link]").forEach(a => a.href = IFOOD);
+    $("#heroChat")?.addEventListener("click", openChat);
+    $("#contactChat")?.addEventListener("click", openChat);
+
+
+    document.addEventListener("keydown", event => { if (event.key === "Escape") { closeCart(); closeChat(); $$(".details-modal,.checkout-modal,.admin-modal").forEach(m => m.classList.remove("open")); } });
 
     /* adiciona detalhes e favoritos aos produtos sem alterar o tema */
     // Produtos cadastrados pelo dono também fazem parte do cardápio público.
