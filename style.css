@@ -3250,3 +3250,134 @@ footer{background:#321e15!important;color:#f9ead0!important;border-top:0!importa
         font-size: 9px !important;
     }
 }
+
+
+/* =========================================================
+   CONTATO MOBILE — VERSÃO LIMPA
+   ========================================================= */
+@media (max-width: 650px) {
+    .contact {
+        width: 100% !important;
+        box-sizing: border-box !important;
+        overflow: hidden !important;
+    }
+
+    .contact-content {
+        width: 100% !important;
+        max-width: 100% !important;
+        box-sizing: border-box !important;
+        padding-left: 16px !important;
+        padding-right: 16px !important;
+    }
+
+    .contact-buttons {
+        width: 100% !important;
+        max-width: 480px !important;
+        box-sizing: border-box !important;
+        margin: 22px auto 0 !important;
+        padding: 0 !important;
+        display: grid !important;
+        grid-template-columns: 1fr !important;
+        gap: 12px !important;
+    }
+
+    .contact-buttons .social-btn {
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: none !important;
+        min-height: 72px !important;
+        height: auto !important;
+        box-sizing: border-box !important;
+        padding: 12px 14px !important;
+        margin: 0 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: flex-start !important;
+        gap: 12px !important;
+        overflow: hidden !important;
+        border-radius: 16px !important;
+        text-align: left !important;
+    }
+
+    .contact-buttons .social-icon {
+        flex: 0 0 44px !important;
+        width: 44px !important;
+        height: 44px !important;
+        min-width: 44px !important;
+        min-height: 44px !important;
+        margin: 0 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        border-radius: 50% !important;
+        line-height: 1 !important;
+    }
+
+    .contact-buttons .social-btn > span:last-child {
+        min-width: 0 !important;
+        width: auto !important;
+        flex: 1 1 auto !important;
+        overflow: hidden !important;
+    }
+
+    .contact-buttons .social-btn small,
+    .contact-buttons .social-btn strong,
+    .contact-buttons .social-btn b {
+        display: block !important;
+        max-width: 100% !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+    }
+
+    .contact-buttons .social-btn small {
+        font-size: 10px !important;
+        line-height: 1.2 !important;
+        margin: 0 0 2px !important;
+    }
+
+    .contact-buttons .social-btn strong {
+        font-size: 16px !important;
+        line-height: 1.2 !important;
+        margin: 0 !important;
+    }
+
+    .contact-buttons .social-btn b {
+        font-size: 10px !important;
+        line-height: 1.25 !important;
+        margin: 2px 0 0 !important;
+        font-weight: 700 !important;
+    }
+}
+
+@media (max-width: 390px) {
+    .contact-content {
+        padding-left: 12px !important;
+        padding-right: 12px !important;
+    }
+
+    .contact-buttons .social-btn {
+        min-height: 66px !important;
+        padding: 10px 12px !important;
+        gap: 10px !important;
+        border-radius: 14px !important;
+    }
+
+    .contact-buttons .social-icon {
+        flex-basis: 40px !important;
+        width: 40px !important;
+        height: 40px !important;
+        min-width: 40px !important;
+        min-height: 40px !important;
+        font-size: 18px !important;
+    }
+
+    .contact-buttons .social-btn strong {
+        font-size: 15px !important;
+    }
+}
+
+/* O chatbot foi removido da interface. */
+.chat-fab, .chatbot {
+    display: none !important;
+}
