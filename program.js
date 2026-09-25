@@ -98,9 +98,27 @@ document.addEventListener("DOMContentLoaded", function () {
         };
     }
 
+    async function ensureAdminSession() {
+        if (!supabaseClient) return false;
+        let session = await getAdminSession();
+        let email = String(session?.user?.email || "").toLowerCase();
+        if (session && AUTHORIZED_ADMIN_EMAILS.has(email)) return true;
+        if (session) {
+            try { await supabaseClient.auth.signOut(); } catch (_) {}
+        }
+        session = await signInAdmin();
+        email = String(session?.user?.email || "").toLowerCase();
+        return !!session && AUTHORIZED_ADMIN_EMAILS.has(email);
+    }
+
     async function saveProductOnline(name) {
         if (!supabaseClient || !name) return false;
         try {
+            const authenticated = await ensureAdminSession();
+            if (!authenticated) {
+                toast("Faça login no painel para sincronizar as alterações.");
+                return false;
+            }
             const payload = remoteProductPayload(name);
             const { data: existing, error: findError } = await supabaseClient
                 .from(SUPABASE_TABLE).select("id").eq("name", name).limit(1);
@@ -1022,7 +1040,7 @@ document.addEventListener("DOMContentLoaded", function () {
             productData[name] = { ...(productData[name] || getBaseProduct(name)), image: dataURL };
             saveJSON(PRODUCT_KEY, productData);
             if (preview) preview.innerHTML = '<img src="' + escapeHTML(dataURL) + '" alt="Prévia">';
-            renderProductImages();
+            renderAvailability();
             toast("Foto carregada! Clique em Salvar alterações. ❤️");
         }).catch(error => {
             console.error("Erro ao carregar foto:", error);
@@ -1631,24 +1649,6 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     }
 
-    /* ===================== CHATBOT ===================== */
-    function openChat() { $("#chatbot")?.classList.add("open"); $("#chatInput")?.focus(); }
-    function closeChat() { $("#chatbot")?.classList.remove("open"); }
-    const answers = [
-        [["oi","ola","olá","bom dia","boa tarde","boa noite"], "Olá! 💗 Bem-vindo(a) à Puro Amor Delícias Caseiras!"],
-        [["cardapio","cardápio","menu"], "📖 Confira nossas delícias no cardápio acima."],
-        [["preco","preço","valor"], "💰 Os preços aparecem em cada produto do cardápio."],
-        [["entrega","delivery"], "🛵 Consulte as condições de entrega no momento do pedido."],
-        [["pedido","comprar","carrinho"], "🛒 Clique em Pedir, confira o carrinho e finalize pelo WhatsApp."],
-        [["instagram"], "📸 Instagram: @puroamor_deliciascaseiras"],
-        [["ifood"], "🛵 O botão do iFood está na área de contato."]
-    ];
-    function chatAnswer(text) {
-        const t = normalize(text);
-        for (const [words, answer] of answers) if (words.some(w => t.includes(normalize(w)))) return answer;
-        return "Posso ajudar com cardápio, preços, entrega, pedido, Instagram ou iFood. 😊";
-    }
-
     /* ===================== EVENTOS ÚNICOS ===================== */
     $("#cartFab")?.addEventListener("click", openCart);
     $("#cartClose")?.addEventListener("click", closeCart);
@@ -1803,35 +1803,7 @@ document.addEventListener("DOMContentLoaded", function () {
     $("#productSearch")?.addEventListener("input", runSearch);
     $("#productSearch")?.addEventListener("search", runSearch);
 
-    $("#chatFab")?.addEventListener("click", () => $("#chatbot")?.classList.contains("open") ? closeChat() : openChat());
-    $("#closeChat")?.addEventListener("click", closeChat);
-    $("#chatForm")?.addEventListener("submit", function (event) {
-        event.preventDefault();
-        const input = $("#chatInput");
-        const text = input?.value.trim();
-        if (!text) return;
-        const messages = $("#chatMessages");
-        const add = (value, type) => { if (!messages) return; const div = document.createElement("div"); div.className = "message " + type; div.textContent = value; messages.appendChild(div); messages.scrollTop = messages.scrollHeight; };
-        input.value = "";
-        add(text, "user");
-        setTimeout(() => add(chatAnswer(text), "bot"), 250);
-    });
-
-    $$(".quick-options button").forEach(button => button.addEventListener("click", () => {
-        const text = button.dataset.question || button.textContent;
-        const messages = $("#chatMessages");
-        if (!messages) return;
-        const add = (value, type) => { const div = document.createElement("div"); div.className = "message " + type; div.textContent = value; messages.appendChild(div); messages.scrollTop = messages.scrollHeight; };
-        add(text, "user");
-        setTimeout(() => add(chatAnswer(text), "bot"), 250);
-    }));
-
-    $$("[data-ifood-link]").forEach(a => a.href = IFOOD);
-    $("#heroChat")?.addEventListener("click", openChat);
-    $("#contactChat")?.addEventListener("click", openChat);
-
-
-    document.addEventListener("keydown", event => { if (event.key === "Escape") { closeCart(); closeChat(); $$(".details-modal,.checkout-modal,.admin-modal").forEach(m => m.classList.remove("open")); } });
+    document.addEventListener("keydown", event => { if (event.key === "Escape") { closeCart(); $$(".details-modal,.checkout-modal,.admin-modal").forEach(m => m.classList.remove("open")); } });
 
     /* adiciona detalhes e favoritos aos produtos sem alterar o tema */
     // Produtos cadastrados pelo dono também fazem parte do cardápio público.
