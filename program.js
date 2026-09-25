@@ -93,7 +93,6 @@ document.addEventListener("DOMContentLoaded", function () {
             image: String(data.image || ""),
             flavors: flavors.join(", "),
             available: !!available,
-            removed: removedProducts.some(x => normalize(x) === normalize(name)),
             novidade: !!flags.novidade,
             mais_pedidos: !!flags.maisPedidos
         };
@@ -128,7 +127,7 @@ document.addEventListener("DOMContentLoaded", function () {
         if (!supabaseClient || !name) return false;
         try {
             const { error } = await supabaseClient.from(SUPABASE_TABLE)
-                .update({ available: false, removed: true }).eq("name", name);
+                .update({ available: false }).eq("name", name);
             if (error) throw error;
             supabaseOnline = true;
             return true;
@@ -147,7 +146,7 @@ document.addEventListener("DOMContentLoaded", function () {
         }
         try {
             const { data: rows, error } = await supabaseClient.from(SUPABASE_TABLE)
-                .select("id,name,price,stock,category,weight,description,image,flavors,available,removed,novidade,mais_pedidos")
+                .select("id,name,price,stock,category,weight,description,image,flavors,available,novidade,mais_pedidos")
                 .order("id", { ascending: true });
             if (error) throw error;
             const staticNames = new Set(productCards().map(card =>
@@ -171,11 +170,6 @@ document.addEventListener("DOMContentLoaded", function () {
                 productData[name] = { ...(productData[name] || {}), ...remoteData };
                 availability[name] = row.available !== false;
                 featured[name] = { novidade: row.novidade === true, maisPedidos: row.mais_pedidos === true };
-            if (row.removed === true) {
-                if (!removedProducts.some(x => normalize(x) === normalize(name))) removedProducts.push(name);
-            } else {
-                removedProducts = removedProducts.filter(x => normalize(x) !== normalize(name));
-            }
                 if (!staticNames.has(key)) {
                     const localCustom = customProducts.find(p => normalize(p.name) === key);
                     if (localCustom) {
@@ -499,44 +493,36 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     async function restoreProduct(name) {
-        removedProducts = removedProducts.filter(x => normalize(x) !== normalize(name));
+        removedProducts = removedProducts.filter(x => x !== name);
         saveRemovedProducts();
-        if (!productData[name]) productData[name] = getProduct(name);
-        if (productData[name].stock === 0) productData[name].stock = 1;
-        availability[name] = true;
-        saveJSON(PRODUCT_KEY, productData);
-        saveAvailability();
         const synced = await saveProductOnline(name);
         applyRemovedProducts();
         renderAvailability();
         prepareSearchData();
-        renderFeatured();
+        renderFeatured();;
         runSearch();
         renderAdminList();
-        toast(synced ? name + " voltou para o cardápio e foi sincronizado! ❤️" : name + " voltou neste navegador, mas não foi sincronizado online.");
+        toast(name + " voltou para o cardápio! ❤️");
     }
 
     async function removeProduct(name) {
-        if (!name) return;
+        const product = customProductByName(name);
         if (!confirm('Remover "' + name + '" do cardápio?')) return;
-
-        if (!removedProducts.some(x => normalize(x) === normalize(name))) {
+        if (product) {
+            customProducts = customProducts.filter(p => p.name !== name);
+            saveCustomProducts();
+        } else if (!removedProducts.includes(name)) {
             removedProducts.push(name);
+            saveRemovedProducts();
         }
-        saveRemovedProducts();
-
-        if (productData[name] === undefined) {
-            productData[name] = getProduct(name);
-        }
-        availability[name] = false;
-        favorites = favorites.filter(x => normalize(x) !== normalize(name));
-        cart = cart.filter(item => normalize(item.produto) !== normalize(name));
-
+        delete productData[name];
+        delete availability[name];
+        favorites = favorites.filter(x => x !== name);
+        cart = cart.filter(item => item.produto !== name);
         saveJSON(PRODUCT_KEY, productData);
         saveAvailability();
         saveJSON(FAV_KEY, favorites);
         saveCart();
-
         renderCustomProducts();
         applyRemovedProducts();
         prepareSearchData();
@@ -546,9 +532,8 @@ document.addEventListener("DOMContentLoaded", function () {
         renderCart();
         runSearch();
         renderAdminList();
-
-        const synced = await removeProductOnline(name);
-        toast(synced ? name + " removido do cardápio e sincronizado!" : name + " removido neste navegador, mas não foi sincronizado online.");
+        if (product) await removeProductOnline(name);
+        toast(name + " removido do cardápio.");
     }
 
     function renderRemovedProducts() {
@@ -884,10 +869,7 @@ document.addEventListener("DOMContentLoaded", function () {
     function removeCategory(index) {
         const name = categories[index];
         if (!name) return;
-        const used = productCards().some(card => {
-            const productName = $(".order-btn", card)?.dataset.product || "";
-            return productName && !removedProducts.some(x => normalize(x) === normalize(productName)) && categorySlug(getProduct(productName).category) === categorySlug(name);
-        });
+        const used = productCards().some(card => categorySlug(getProduct($(".order-btn", card)?.dataset.product || "").category) === categorySlug(name));
         if (used) { toast("Não é possível excluir uma categoria que possui produtos. Renomeie ou mova os produtos primeiro."); return; }
         if (!confirm('Excluir a categoria "' + name + '"?')) return;
         categories.splice(index, 1);
