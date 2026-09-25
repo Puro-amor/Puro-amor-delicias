@@ -417,6 +417,7 @@ document.addEventListener("DOMContentLoaded", function () {
         if (!container) return;
         $$(".custom-product-card", container).forEach(card => card.remove());
         customProducts.forEach(product => {
+            if (removedProducts.some(name => normalize(name) === normalize(product.name))) return;
             const category = ensureCategoryFilter(product.category);
             const card = document.createElement("article");
             card.className = "product-card custom-product-card";
@@ -488,53 +489,45 @@ document.addEventListener("DOMContentLoaded", function () {
     function applyRemovedProducts() {
         productCards().forEach(card => {
             const name = $(".order-btn", card)?.dataset.product || "";
-            card.classList.toggle("product-removed", removedProducts.includes(name));
+            card.classList.toggle("product-removed", removedProducts.some(x => normalize(x) === normalize(name)));
         });
     }
 
     async function restoreProduct(name) {
-        removedProducts = removedProducts.filter(x => x !== name);
+        const key = normalize(name);
+        removedProducts = removedProducts.filter(x => normalize(x) !== key);
+        availability[name] = true;
         saveRemovedProducts();
+        saveAvailability();
         const synced = await saveProductOnline(name);
+        renderCustomProducts();
         applyRemovedProducts();
         renderAvailability();
         prepareSearchData();
-        renderFeatured();;
+        renderFeatured();
+        renderFavoriteButtons();
         runSearch();
         renderAdminList();
-        toast(name + " voltou para o cardápio! ❤️");
+        toast(synced ? name + " voltou para o cardápio e foi sincronizado! ❤️" : name + " voltou neste navegador, mas não foi sincronizado online.");
     }
 
     async function removeProduct(name) {
         if (!name || !confirm('Remover "' + name + '" do cardápio?')) return;
-
-        // Primeiro sincroniza a remoção no Supabase para que os outros dispositivos
-        // também recebam a indisponibilidade. Não apagamos productData antes disso,
-        // pois ele ainda é necessário para identificar o registro remoto.
-        const synced = await removeProductOnline(name);
-        if (!synced) {
-            toast("Não foi possível remover este produto online. Tente novamente.");
-            return;
-        }
-
-        const product = customProductByName(name);
-        if (product) {
-            customProducts = customProducts.filter(p => normalize(p.name) !== normalize(name));
-            saveCustomProducts();
-        } else if (!removedProducts.some(x => normalize(x) === normalize(name))) {
+        if (!removedProducts.some(x => normalize(x) === normalize(name))) {
             removedProducts.push(name);
-            saveRemovedProducts();
         }
-
+        // Não apagamos productData/customProducts: os dados precisam continuar
+        // disponíveis para edição e restauração. A remoção é apenas um estado.
         availability[name] = false;
-        if (productData[name]) productData[name].available = false;
+        saveRemovedProducts();
+        saveAvailability();
         favorites = favorites.filter(x => normalize(x) !== normalize(name));
         cart = cart.filter(item => normalize(item.produto) !== normalize(name));
-
-        saveJSON(PRODUCT_KEY, productData);
-        saveAvailability();
         saveJSON(FAV_KEY, favorites);
         saveCart();
+
+        const synced = await removeProductOnline(name);
+
         renderCustomProducts();
         applyRemovedProducts();
         prepareSearchData();
@@ -544,7 +537,7 @@ document.addEventListener("DOMContentLoaded", function () {
         renderCart();
         runSearch();
         renderAdminList();
-        toast(name + " removido do cardápio e sincronizado! ❤️");
+        toast(synced ? name + " removido e sincronizado online." : name + " removido neste navegador, mas não foi sincronizado online.");
     }
 
     function renderRemovedProducts() {
@@ -880,54 +873,18 @@ document.addEventListener("DOMContentLoaded", function () {
     function removeCategory(index) {
         const name = categories[index];
         if (!name) return;
-
-        const usedCards = productCards().filter(card => {
+        const used = productCards().some(card => {
             const productName = $(".order-btn", card)?.dataset.product || "";
-            return productName && categorySlug(getProduct(productName).category) === categorySlug(name);
+            return !removedProducts.some(x => normalize(x) === normalize(productName)) &&
+                categorySlug(getProduct(productName).category) === categorySlug(name);
         });
-        const usedCustom = customProducts.filter(product => categorySlug(product.category) === categorySlug(name));
-        const usedCount = usedCards.length + usedCustom.length;
-
-        if (usedCount) {
-            const destino = window.prompt(
-                'A categoria "' + categoryLabel(name) + '" possui ' + usedCount + ' produto(s). Digite a nova categoria para mover esses produtos antes de excluir:',
-                "Outros"
-            );
-            if (!destino || !destino.trim()) return;
-            const target = destino.trim();
-            if (normalize(target) === normalize(name)) {
-                toast("Escolha uma categoria diferente.");
-                return;
-            }
-            registerCategory(target);
-
-            usedCards.forEach(card => {
-                const productName = $(".order-btn", card)?.dataset.product || "";
-                if (!productName) return;
-                productData[productName] = { ...(productData[productName] || {}), category: target };
-                saveProductOnline(productName);
-            });
-            usedCustom.forEach(product => {
-                product.category = target;
-                productData[product.name] = { ...(productData[product.name] || {}), category: target };
-                saveProductOnline(product.name);
-            });
-            saveJSON(PRODUCT_KEY, productData);
-            saveCustomProducts();
-        }
-
-        if (!confirm('Excluir a categoria "' + categoryLabel(name) + '"?')) return;
+        if (used) { toast("Não é possível excluir uma categoria que possui produtos. Renomeie ou mova os produtos primeiro."); return; }
+        if (!confirm('Excluir a categoria "' + name + '"?')) return;
         categories.splice(index, 1);
         saveJSON(CATEGORY_KEY, categories);
-        renderCustomProducts();
         renderCategoryFilters();
         renderAdminCategories();
-        renderAvailability();
-        prepareSearchData();
-        renderFeatured();
-        runSearch();
-        renderAdminList();
-        toast("Categoria excluída com sucesso.");
+        toast("Categoria excluída.");
     }
 
     function renderAdminList() {

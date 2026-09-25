@@ -1653,6 +1653,185 @@
 
 
     <!-- =====================================================
+         CHATBOT
+    ====================================================== -->
+
+
+    <!-- BOTÃO -->
+
+    <button
+        class="chat-fab"
+        id="chatFab"
+        type="button"
+        aria-label="Abrir chatbot"
+    >
+        💬
+    </button>
+
+
+
+    <!-- CHAT -->
+
+    <div
+        class="chatbot"
+        id="chatbot"
+    >
+
+
+        <!-- CABEÇALHO -->
+
+        <div class="chat-header">
+
+            <div>
+
+                <strong>
+                    🍰 Puro Amor Bot
+                </strong>
+
+                <small>
+                    Atendimento virtual
+                </small>
+
+            </div>
+
+
+            <button
+                id="closeChat"
+                type="button"
+                aria-label="Fechar chatbot"
+            >
+                ×
+            </button>
+
+        </div>
+
+
+
+        <!-- MENSAGENS -->
+
+        <div
+            class="chat-messages"
+            id="chatMessages"
+        >
+
+            <div class="message bot">
+
+                Olá! 💗
+
+                Seja bem-vindo(a) à Puro Amor!
+
+                <br><br>
+
+                Posso ajudar com:
+
+                <br><br>
+
+                🍰 Cardápio
+
+                <br>
+
+                💰 Preços
+
+                <br>
+
+                🛵 Entrega
+
+                <br>
+
+                💳 Pagamento
+
+                <br>
+
+                🛒 Carrinho
+
+                <br>
+
+                📱 Contato
+
+            </div>
+
+        </div>
+
+
+
+        <!-- PERGUNTAS RÁPIDAS -->
+
+        <div class="quick-options">
+
+
+            <button
+                type="button"
+                data-question="Qual é o cardápio?"
+            >
+                🍰 Cardápio
+            </button>
+
+
+            <button
+                type="button"
+                data-question="Quais são os preços?"
+            >
+                💰 Preços
+            </button>
+
+
+            <button
+                type="button"
+                data-question="Vocês fazem entrega?"
+            >
+                🛵 Entrega
+            </button>
+
+
+            <button
+                type="button"
+                data-question="Quais são as formas de pagamento?"
+            >
+                💳 Pagamento
+            </button>
+
+
+            <button
+                type="button"
+                data-question="Como faço para comprar?"
+            >
+                🛒 Comprar
+            </button>
+
+
+        </div>
+
+
+
+        <!-- CAMPO -->
+
+        <form
+            class="chat-input"
+            id="chatForm"
+        >
+
+            <input
+                type="text"
+                id="chatInput"
+                placeholder="Digite sua pergunta..."
+                autocomplete="off"
+            >
+
+
+            <button
+                type="submit"
+                aria-label="Enviar mensagem"
+            >
+                ➤
+            </button>
+
+        </form>
+
+    </div>
+
+
+
+    <!-- =====================================================
          TOAST
     ====================================================== -->
 
@@ -1669,7 +1848,7 @@
     ====================================================== -->
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="program.js?v=20260925-sync-fix-4"></script>
+    <script src="program.js?v=20260925-mobile-contact-3"></script>
 
 
 </body>
