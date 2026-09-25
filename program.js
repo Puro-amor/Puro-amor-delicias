@@ -99,48 +99,43 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     async function saveProductOnline(name) {
-        if (!supabaseClient || !name) return;
+        if (!supabaseClient || !name) return false;
         try {
             const payload = remoteProductPayload(name);
             const { data: existing, error: findError } = await supabaseClient
-                .from(SUPABASE_TABLE)
-                .select("id")
-                .eq("name", name)
-                .limit(1);
+                .from(SUPABASE_TABLE).select("id").eq("name", name).limit(1);
             if (findError) throw findError;
-
-            let error;
             if (existing && existing.length) {
-                ({ error } = await supabaseClient
-                    .from(SUPABASE_TABLE)
-                    .update(payload)
-                    .eq("id", existing[0].id));
+                const { error } = await supabaseClient.from(SUPABASE_TABLE)
+                    .update(payload).eq("id", existing[0].id);
+                if (error) throw error;
             } else {
-                ({ error } = await supabaseClient
-                    .from(SUPABASE_TABLE)
-                    .insert(payload));
+                const { error } = await supabaseClient.from(SUPABASE_TABLE).insert(payload);
+                if (error) throw error;
             }
-            if (error) throw error;
             supabaseOnline = true;
+            return true;
         } catch (error) {
             console.error("Supabase: não foi possível salvar o produto.", error);
             supabaseOnline = false;
-            toast("Alteração salva neste navegador. O Supabase não respondeu.");
+            toast("Não foi possível sincronizar este produto online.");
+            return false;
         }
     }
 
     async function removeProductOnline(name) {
-        if (!supabaseClient || !name) return;
+        if (!supabaseClient || !name) return false;
         try {
-            const { error } = await supabaseClient
-                .from(SUPABASE_TABLE)
-                .update({ available: false })
-                .eq("name", name);
+            const { error } = await supabaseClient.from(SUPABASE_TABLE)
+                .update({ available: false }).eq("name", name);
             if (error) throw error;
             supabaseOnline = true;
+            return true;
         } catch (error) {
             console.error("Supabase: não foi possível marcar o produto como removido.", error);
             supabaseOnline = false;
+            toast("O produto foi removido deste navegador, mas não foi sincronizado online.");
+            return false;
         }
     }
 
@@ -150,21 +145,21 @@ document.addEventListener("DOMContentLoaded", function () {
             return;
         }
         try {
-            const { data: rows, error } = await supabaseClient
-                .from(SUPABASE_TABLE)
+            const { data: rows, error } = await supabaseClient.from(SUPABASE_TABLE)
                 .select("id,name,price,stock,category,weight,description,image,flavors,available,novidade,mais_pedidos")
                 .order("id", { ascending: true });
             if (error) throw error;
-
+            const staticNames = new Set(productCards().map(card =>
+                normalize($(".order-btn", card)?.dataset.product || "")
+            ));
             (rows || []).forEach(row => {
                 if (!row.name) return;
                 const name = String(row.name);
-                const existsInStaticCatalog = productCards().some(card => normalize($(".order-btn", card)?.dataset.product || "") === normalize(name));
-                productData[name] = {
-                    ...(productData[name] || {}),
+                const key = normalize(name);
+                const remoteData = {
                     price: Number(row.price || 0),
                     stock: row.stock === null ? null : Number(row.stock),
-                    category: row.category || (productData[name]?.category || "Outros"),
+                    category: row.category || "Outros",
                     weight: row.weight || "",
                     description: row.description || "",
                     image: row.image || "",
@@ -172,25 +167,30 @@ document.addEventListener("DOMContentLoaded", function () {
                     novidade: row.novidade === true,
                     maisPedidos: row.mais_pedidos === true
                 };
+                productData[name] = { ...(productData[name] || {}), ...remoteData };
                 availability[name] = row.available !== false;
                 featured[name] = { novidade: row.novidade === true, maisPedidos: row.mais_pedidos === true };
-
-                if (!existsInStaticCatalog && !customProductByName(name)) {
-                    customProducts.push({
-                        id: "remote-" + row.id,
-                        name,
-                        price: Number(row.price || 0),
-                        stock: row.stock === null ? null : Number(row.stock),
-                        category: row.category || "Outros",
-                        weight: row.weight || "",
-                        flavors: normalizeFlavors(row.flavors || ""),
-                        description: row.description || "",
-                        image: row.image || "",
-                        createdAt: new Date().toISOString()
-                    });
+                if (!staticNames.has(key)) {
+                    const localCustom = customProducts.find(p => normalize(p.name) === key);
+                    if (localCustom) {
+                        Object.assign(localCustom, {
+                            remoteId: row.id, price: remoteData.price, stock: remoteData.stock,
+                            category: remoteData.category, weight: remoteData.weight,
+                            flavors: remoteData.flavors, description: remoteData.description,
+                            image: remoteData.image, remoteAvailable: row.available !== false
+                        });
+                    } else {
+                        customProducts.push({
+                            id: "remote-" + row.id, remoteId: row.id, name,
+                            price: remoteData.price, stock: remoteData.stock,
+                            category: remoteData.category, weight: remoteData.weight,
+                            flavors: remoteData.flavors, description: remoteData.description,
+                            image: remoteData.image, remoteAvailable: row.available !== false,
+                            createdAt: new Date().toISOString()
+                        });
+                    }
                 }
             });
-
             saveJSON(PRODUCT_KEY, productData);
             saveJSON(AVAIL_KEY, availability);
             saveJSON(FEATURED_KEY, featured);
@@ -492,10 +492,10 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     }
 
-    function restoreProduct(name) {
+    async function restoreProduct(name) {
         removedProducts = removedProducts.filter(x => x !== name);
         saveRemovedProducts();
-        saveProductOnline(name);
+        const synced = await saveProductOnline(name);
         applyRemovedProducts();
         renderAvailability();
         prepareSearchData();
@@ -505,7 +505,7 @@ document.addEventListener("DOMContentLoaded", function () {
         toast(name + " voltou para o cardápio! ❤️");
     }
 
-    function removeProduct(name) {
+    async function removeProduct(name) {
         const product = customProductByName(name);
         if (!confirm('Remover "' + name + '" do cardápio?')) return;
         if (product) {
@@ -532,6 +532,7 @@ document.addEventListener("DOMContentLoaded", function () {
         renderCart();
         runSearch();
         renderAdminList();
+        if (product) await removeProductOnline(name);
         toast(name + " removido do cardápio.");
     }
 
@@ -593,7 +594,7 @@ document.addEventListener("DOMContentLoaded", function () {
         saveCustomProducts();
         saveJSON(PRODUCT_KEY, productData);
         saveAvailability();
-        await saveProductOnline(name);
+        const synced = await saveProductOnline(name);
 
         // Recria o card no catálogo público e trata o produto novo como os demais.
         renderCustomProducts();
@@ -908,7 +909,7 @@ document.addEventListener("DOMContentLoaded", function () {
         renderAdminCategories();
     }
 
-    function saveProductEditor(name) {
+    async function saveProductEditor(name) {
         const priceField = $("[data-edit-price][data-name=\"" + CSS.escape(name) + "\"]");
         const priceRaw = priceField?.value.trim() || "";
         const price = parsePriceInput(priceRaw);
@@ -932,26 +933,26 @@ document.addEventListener("DOMContentLoaded", function () {
         else if (stock === null || stock > 0) availability[name] = true;
         saveJSON(PRODUCT_KEY, productData);
         saveAvailability();
-        saveProductOnline(name);
+        const synced = await saveProductOnline(name);
         renderAvailability();
         prepareSearchData();
         renderFeatured();
         renderFavoriteButtons();
         runSearch();
         renderAdminList();
-        toast(name + " atualizado com sucesso! ❤️");
+        toast(synced ? name + " atualizado e sincronizado online! ❤️" : name + " atualizado neste navegador, mas não foi sincronizado online.");
     }
 
-    function toggleAvailability(name) {
+    async function toggleAvailability(name) {
         availability[name] = !isAvailable(name);
         if (availability[name] && productData[name]?.stock === 0) productData[name].stock = 1;
         saveAvailability();
         saveJSON(PRODUCT_KEY, productData);
-        saveProductOnline(name);
+        const synced = await saveProductOnline(name);
         renderAvailability();
         renderAdminList();
         runSearch();
-        toast(isAvailable(name) ? name + " está disponível novamente. ❤️" : name + " foi marcado como indisponível.");
+        toast(synced ? name + " cadastrado e sincronizado online! ❤️" : name + " cadastrado neste navegador, mas não foi sincronizado online.");
     }
 
     function compressImage(file) {
