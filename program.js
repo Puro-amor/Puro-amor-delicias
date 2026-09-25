@@ -127,7 +127,7 @@ document.addEventListener("DOMContentLoaded", function () {
         if (!supabaseClient || !name) return false;
         try {
             const { error } = await supabaseClient.from(SUPABASE_TABLE)
-                .update({ available: false }).eq("name", name);
+                .update({ available: false, removed: true }).eq("name", name);
             if (error) throw error;
             supabaseOnline = true;
             return true;
@@ -146,7 +146,7 @@ document.addEventListener("DOMContentLoaded", function () {
         }
         try {
             const { data: rows, error } = await supabaseClient.from(SUPABASE_TABLE)
-                .select("id,name,price,stock,category,weight,description,image,flavors,available,novidade,mais_pedidos")
+                .select("id,name,price,stock,category,weight,description,image,flavors,available,novidade,mais_pedidos,removed")
                 .order("id", { ascending: true });
             if (error) throw error;
             const staticNames = new Set(productCards().map(card =>
@@ -156,6 +156,10 @@ document.addEventListener("DOMContentLoaded", function () {
                 if (!row.name) return;
                 const name = String(row.name);
                 const key = normalize(name);
+                if (row.removed === true) {
+                    if (!removedProducts.includes(name)) removedProducts.push(name);
+                    return;
+                }
                 const remoteData = {
                     price: Number(row.price || 0),
                     stock: row.stock === null ? null : Number(row.stock),
@@ -412,6 +416,33 @@ document.addEventListener("DOMContentLoaded", function () {
         return categorySlug(category);
     }
 
+    function migrateStaticProductsToCustom() {
+        const container = $("#allProducts");
+        if (!container) return;
+        const cards = $$(".product-card", container).filter(card => !card.classList.contains("custom-product-card"));
+        cards.forEach(card => {
+            const button = $(".order-btn", card);
+            const name = button?.dataset.product?.trim();
+            if (!name || customProductByName(name)) return;
+            const data = getProduct(name);
+            const category = card.dataset.category || data.category || "Outros";
+            const image = $("img", card)?.getAttribute("src") || data.image || "";
+            const description = $("p", card)?.textContent?.trim() || data.description || "";
+            const price = Number(button?.dataset.price ?? data.price ?? 0);
+            customProducts.push({
+                id: "migrated-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8),
+                name, price, stock: data.stock ?? null, category,
+                weight: data.weight || "", flavors: normalizeFlavors(data.flavors || ""),
+                description, image, createdAt: new Date().toISOString(),
+                migratedFromHtml: true
+            });
+            productData[name] = { ...(productData[name] || {}), price, category, description, image, weight: data.weight || "", flavors: normalizeFlavors(data.flavors || "") };
+            card.remove();
+        });
+        saveCustomProducts();
+        saveJSON(PRODUCT_KEY, productData);
+    }
+
     function renderCustomProducts() {
         const container = $("#allProducts");
         if (!container) return;
@@ -506,23 +537,24 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     async function removeProduct(name) {
-        const product = customProductByName(name);
+        if (!name) return;
         if (!confirm('Remover "' + name + '" do cardápio?')) return;
-        if (product) {
-            customProducts = customProducts.filter(p => p.name !== name);
-            saveCustomProducts();
-        } else if (!removedProducts.includes(name)) {
+
+        // Todos os produtos, inclusive os que vieram originalmente no HTML,
+        // usam agora a mesma lógica de remoção. Mantemos os dados para permitir restaurar.
+        if (!removedProducts.some(x => normalize(x) === normalize(name))) {
             removedProducts.push(name);
-            saveRemovedProducts();
         }
-        delete productData[name];
+        saveRemovedProducts();
+
         delete availability[name];
-        favorites = favorites.filter(x => x !== name);
-        cart = cart.filter(item => item.produto !== name);
-        saveJSON(PRODUCT_KEY, productData);
+        favorites = favorites.filter(x => normalize(x) !== normalize(name));
+        cart = cart.filter(item => normalize(item.produto) !== normalize(name));
         saveAvailability();
         saveJSON(FAV_KEY, favorites);
         saveCart();
+
+        const synced = await removeProductOnline(name);
         renderCustomProducts();
         applyRemovedProducts();
         prepareSearchData();
@@ -532,8 +564,7 @@ document.addEventListener("DOMContentLoaded", function () {
         renderCart();
         runSearch();
         renderAdminList();
-        if (product) await removeProductOnline(name);
-        toast(name + " removido do cardápio.");
+        toast(synced ? name + ' removido e sincronizado online. ❤️' : name + ' removido neste navegador, mas não foi sincronizado online.');
     }
 
     function renderRemovedProducts() {
@@ -869,7 +900,7 @@ document.addEventListener("DOMContentLoaded", function () {
     function removeCategory(index) {
         const name = categories[index];
         if (!name) return;
-        const used = productCards().some(card => categorySlug(getProduct($(".order-btn", card)?.dataset.product || "").category) === categorySlug(name));
+        const used = productCards().some(card => { const productName = $(".order-btn", card)?.dataset.product || ""; return !removedProducts.some(x => normalize(x) === normalize(productName)) && categorySlug(getProduct(productName).category) === categorySlug(name); });
         if (used) { toast("Não é possível excluir uma categoria que possui produtos. Renomeie ou mova os produtos primeiro."); return; }
         if (!confirm('Excluir a categoria "' + name + '"?')) return;
         categories.splice(index, 1);
@@ -1837,6 +1868,7 @@ document.addEventListener("DOMContentLoaded", function () {
     // Produtos cadastrados pelo dono também fazem parte do cardápio público.
     // Primeiro tentamos buscar as alterações no Supabase; se falhar, o site
     // continua funcionando com os dados salvos neste navegador.
+    migrateStaticProductsToCustom();
     loadProductsOnline().finally(() => {
     renderCustomProducts();
     applyRemovedProducts();
